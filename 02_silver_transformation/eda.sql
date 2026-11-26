@@ -1,0 +1,263 @@
+
+-- Exploratory Data Analysis 
+
+-- ====================================================
+-- TABLE: transaction_data 
+-- ====================================================
+
+-- How many rows on transaction table
+-- SELECT 
+-- COUNT(*) AS total_rows,
+-- COUNT(DISTINCT household_key) AS total_household,
+-- COUNT(DISTINCT BASKET_ID) AS total_basket,
+-- COUNT(DISTINCT PRODUCT_ID) AS total_product,
+-- COUNT(DISTINCT STORE_ID) AS total_store,
+-- MAX(WEEK_NO) as max_week
+-- FROM dunnhumby_project.bronze.transaction_data;
+-- Results:
+--- Rows: 2_595_732
+--- Households: 2_500
+
+-- Checking missing values
+-- SELECT 
+--     COUNT(*) AS total_rows,
+--     COUNT_IF(household_key IS NULL) AS null_household_key,
+--     COUNT_IF(BASKET_ID IS NULL) AS null_BASKET_ID,
+--     COUNT_IF(DAY IS NULL) AS null_DAY,
+--     COUNT_IF(PRODUCT_ID IS NULL) AS null_PRODUCT_ID,
+--     COUNT_IF(QUANTITY IS NULL) AS null_QUANTITY,
+--     COUNT_IF(SALES_VALUE IS NULL) AS null_SALES_VALUE,
+--     COUNT_IF(STORE_ID IS NULL) AS null_STORE_ID,
+--     COUNT_IF(RETAIL_DISC IS NULL) AS null_RETAIL_DISC,
+--     COUNT_IF(TRANS_TIME IS NULL) AS null_TRANS_TIME,
+--     COUNT_IF(WEEK_NO IS NULL) AS null_WEEK_NO,
+--     COUNT_IF(COUPON_DISC IS NULL) AS null_COUPON_DISC,
+--     COUNT_IF(COUPON_MATCH_DISC IS NULL) AS null_COUPON_MATCH_DISC
+-- FROM dunnhumby_project.bronze.transaction_data 
+-- Expectation: No missing values
+-- Result: No missing values
+
+-- Checking duplicate rows 
+-- SELECT 
+--     COUNT(*) AS total_rows,
+--     COUNT(DISTINCT *) AS distinct_rows,
+--     COUNT(*) - COUNT(DISTINCT *) AS duplicate_rows
+-- FROM dunnhumby_project.bronze.transaction_data
+-- Expectation: 0 duplicate rows
+-- Result: 0 duplicate rows
+
+-- Checking uniqueness of ids 
+-- Looking for the basket that has multiple duplicate product 
+-- Find baskets where the same product appears on multiple rows
+-- SELECT
+--   household_key,
+--   basket_id,
+--   product_id,
+--   COUNT(*) AS line_count,
+--   SUM(quantity) AS total_qty,
+--   ROUND(SUM(sales_value), 2) AS total_sales
+-- FROM dunnhumby_project.bronze.transaction_data
+-- GROUP BY household_key, basket_id, product_id
+-- HAVING COUNT(*) > 1
+-- ORDER BY line_count DESC, total_sales DESC
+-- Expectation: 0
+-- Result: 0
+
+-- Sanity check: check if there are baskets with multiple household_key, day, store_id
+-- SELECT 
+--     basket_id,
+--     COUNT(DISTINCT household_key) AS distinct_households,
+--     COUNT(DISTINCT day) AS distinct_day,
+--     COUNT(DISTINCT store_id) AS distinct_store
+-- FROM dunnhumby_project.bronze.transaction_data
+-- GROUP BY basket_id
+-- HAVING COUNT(DISTINCT household_key) > 1
+-- OR COUNT(DISTINCT day) > 1
+-- OR COUNT(DISTINCT store_id) > 1
+-- -- Expectation: 0
+-- -- Result: 0
+
+-- checking outlier values
+-- SELECT
+--     CASE WHEN sales_value < 0 THEN 'Negative' ELSE 'Positive' END AS sales_value_sign,
+--     count(sales_value) AS count
+-- FROM dunnhumby_project.bronze.transaction_data
+-- GROUP BY SALES_VALUE 
+-- HAVING sales_value < 0
+-- Expectation: 0
+-- Result:0
+
+-- Checking edge cases
+-- SELECT 
+--   CASE
+--     WHEN SALES_VALUE = 0 AND QUANTITY = 0 THEN 'zero_sales_and_zero_qty'
+--     WHEN SALES_VALUE = 0 AND QUANTITY > 0 THEN 'zero_sales_positive_qty (e.g., free/promo)'
+--     WHEN SALES_VALUE > 0 AND QUANTITY = 0 THEN 'positive_sales_zero_qty'
+--     WHEN SALES_VALUE < 0 OR QUANTITY < 0   THEN 'negative_sales_or_qty (e.g., return/adj)'
+--     ELSE 'other_non_zero'
+--   END AS edge_case_bucket,
+--   count(*) as row_count,
+--   ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 4) AS pct_of_filtered_rows
+-- FROM dunnhumby_project.bronze.transaction_data
+-- GROUP BY edge_case_bucket
+-- ORDER BY row_count DESC
+-- Result:
+--  other_non_zero	                        | 2576815 | 99.2712%
+--  zero_sales_and_zero_qty	                | 14399	  | 0.5547%
+--  zero_sales_positive_qty (free/promo)	| 4451	  | 0.1715%
+--  positive_sales_zero_qty	                | 67	  | 0.0026%
+
+-- Checking product_id integrity 
+-- SELECT 
+--  COUNT(*) AS total_rows,
+--  COUNT_IF(p.PRODUCT_ID IS NULL) AS unmatched_txn_rows,
+--  COUNT(DISTINCT t.PRODUCT_ID) AS distinct_txn_products,
+--  COUNT(DISTINCT CASE WHEN p.PRODUCT_ID IS NULL THEN t.PRODUCT_ID END) AS distinct_unmatched_products
+-- FROM dunnhumby_project.bronze.transaction_data t
+-- LEFT JOIN dunnhumby_project.bronze.product p
+--   ON t.PRODUCT_ID = p.PRODUCT_ID;
+-- Expectation: 0 unmatched
+-- Result:0 unmatched
+
+-- ====================================================
+-- TABLE: hh_demographics (household demographics)
+-- ====================================================
+
+-- Understanding the household demographics
+-- SELECT
+--     COUNT(distinct household_key) as total_fam,
+--     COUNT(DISTINCT classification_1) AS total_classification_1,
+--     COUNT(DISTINCT classification_2) AS total_classification_2,
+--     COUNT(DISTINCT classification_3) AS total_classification_3,
+--     COUNT(DISTINCT classification_4) AS total_classification_4,
+--     COUNT(DISTINCT classification_5) AS total_classification_5,
+--     COUNT(DISTINCT KID_CATEGORY_DESC) AS total_KID_CATEGORY_DESC,
+--     COUNT(DISTINCT HOMEOWNER_DESC) AS total_HOMEOWNER_DESC
+-- FROM dunnhumby_project.bronze.hh_demographic;
+-- Result: 
+-- PRIMARY KEY: household_key
+-- total families: 801 (2500 household on transaction_data)
+-- class_1: Age Group 1-6
+-- class_2: X,Y,Z
+-- class_3: Level 1-12
+-- class_4: 1,2,3,4,5+
+-- class_5: Group1-6
+-- homeowner_desc: Homeowner,Unknown,Renter,Probable Renter,Probable Owner
+-- kid_category_desc: 1,2,3+, None/Unkown
+
+-- Checking null values
+-- SELECT 
+--     COUNT_IF(household_key IS NULL) AS null_key,
+--     COUNT_IF(classification_1 IS NULL) AS null_class_1,
+--     COUNT_IF(classification_2 IS NULL) AS null_class_2,
+--     COUNT_IF(classification_3 IS NULL) AS null_class_3,
+--     COUNT_IF(classification_4 IS NULL) AS null_class_4,
+--     COUNT_IF(classification_5 IS NULL) AS null_class_5,
+--     COUNT_IF(KID_CATEGORY_DESC IS NULL) AS null_kid,
+--     COUNT_IF(HOMEOWNER_DESC IS NULL) AS null_home
+-- FROM dunnhumby_project.bronze.hh_demographic;
+-- Expection: No null values
+-- Result: No null values
+
+-- ====================================================
+-- TABLE: campaign_table
+-- ====================================================
+
+-- Checking null values and whitespaces
+-- SELECT 
+--     COUNT_IF(household_key IS NULL) AS null_key,
+--     COUNT_IF(CAMPAIGN IS NULL) as null_campaign,
+--     COUNT_IF(DESCRIPTION IS NULL) as null_description
+--     COUNT_IF(TRIM(DESCRIPTION) = "") as whitespace_description
+-- FROM dunnhumby_project.bronze.campaign_table;
+-- Expection: No null values and white spaces
+-- Result: No null values and white spaces
+
+-- Checking duplicate 
+-- SELECT
+--     household_key, 
+--     campaign,
+--     count(*) total_camp
+-- FROM dunnhumby_project.bronze.campaign_table 
+-- group by household_key, CAMPAIGN
+-- having count(*) > 1
+-- Result: No duplicated campaign for every household
+
+-- ====================================================
+-- TABLE: campaign_desc
+-- ====================================================
+
+-- SELECT 
+--     COUNT(*) AS total_rows,
+--     COUNT(DISTINCT campaign) AS total_campgn,
+--     COUNT_IF(TRIM(description) = '' OR description IS NULL) as empty_descript,
+--     MAX(END_DAY) as max_end_day,
+--     MAX(START_DAY) as max_start_day,
+--     MIN(END_DAY) as min_end_day,
+--     MIN(START_DAY) as min_start_day,
+--     COUNT(DISTINCT CASE WHEN END_DAY < START_DAY THEN 1 END) as invalid_days
+-- FROM dunnhumby_project.bronze.campaign_desc;
+-- Result: 30 campaigns with no empty values 
+
+-- ====================================================
+-- TABLE: product
+-- ====================================================
+
+-- Checking duplicates and whitespaces
+-- SELECT 
+--     COUNT (DISTINCT PRODUCT_ID) AS total_product,
+--     COUNT_IF(product_id IS NULL) AS null_products,
+--     COUNT_IF(TRIM(manufacturer) = '') AS empty_manufacturer,
+--     COUNT_IF(TRIM(department) = '') AS empty_department,
+--     COUNT_IF(TRIM(brand) = '') as empty_brands,
+--     COUNT_IF(TRIM(commodity_desc) = '') as empty_commodity,
+--     COUNT_IF(TRIM(sub_commodity_desc) = '') as empty_sub_commodity,
+--     COUNT_IF(TRIM(curr_size_of_product) = '') as empty_size
+-- FROM dunnhumby_project.bronze.product;
+-- Result: 92_353 total unique product
+--- Empty Department, Commodity and Sub Commodity: 15 
+--- Empty Size: 30607
+
+-- ====================================================
+-- TABLE: coupon
+-- ====================================================
+
+-- Checking null values
+-- SELECT 
+--     COUNT(*) AS total_rows,
+--     COUNT(DISTINCT COUPON_UPC) AS total_coupon,
+--     COUNT_IF(COUPON_UPC IS NULL) AS null_coupon,
+--     COUNT_IF(PRODUCT_ID IS NULL) AS null_product,
+--     COUNT_IF(CAMPAIGN IS NULL) AS null_campaign
+-- FROM dunnhumby_project.bronze.coupon
+-- Expectation: 0
+-- Result: 0
+
+-- ====================================================
+-- TABLE: coupon_redepmt
+-- ====================================================
+
+-- SELECT 
+--     COUNT_IF(household_key IS NULL) AS null_key,
+--     COUNT_IF(day IS NULL) AS null_day,
+--     COUNT_IF(TRY_CAST(day AS INT) IS NULL AND day IS NOT NULL) AS non_numeric_day,
+--     COUNT_IF(TRY_CAST(day AS INT) < 1 OR TRY_CAST(day AS INT) > 711) AS out_of_range_day,
+--     COUNT_IF(coupon_upc IS NULL) AS null_coupon,
+--     COUNT_IF(campaign IS NULL) AS null_campaign
+-- FROM dunnhumby_project.bronze.coupon_redempt;
+-- Result: No null values and invalid days
+
+-- ====================================================
+-- TABLE: causal_data
+-- ====================================================
+
+-- Checking null values
+-- SELECT 
+--     COUNT_IF(product_id IS NULL) AS null_prod_id,
+--     COUNT_IF(store_id IS NULL) AS null_store_id,
+--     COUNT_IF(week_no IS NULL) AS null_week_no,
+--     COUNT_IF(display IS NULL) AS null_display,
+--     COUNT_IF(mailer IS NULL) AS null_mailer
+-- FROM dunnhumby_project.bronze.causal_data
+-- Expectation: 0
+-- Result: 0
