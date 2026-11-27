@@ -1,0 +1,173 @@
+-- =====================================================================
+-- OVERVIEW
+-- =====================================================================
+-- Q: What is our total revenue and average basket?
+-- SELECT 
+--     ROUND(SUM(sales_value), 2) AS total_revenue,
+--     COUNT(DISTINCT basket_id) AS total_baskets,
+--     COUNT(DISTINCT household_key) AS total_customers,
+--     ROUND(SUM(sales_value) / COUNT(DISTINCT basket_id), 2) AS avg_basket_value
+-- FROM dunnhumby_project.silver.transactions_enriched;
+-- total rev: 8_057_463.08
+-- total baskets: 276_484
+-- total customers: 2500
+-- avg basket value: 29.14
+
+-- Q: Which departments drive the most money?
+-- SELECT 
+--     department,
+--     ROUND(SUM(sales_value),2) as total_sales,
+--     ROUND(SUM(sales_value) * 100 / SUM(SUM(sales_value)) OVER (), 2)  as percentage
+-- FROM dunnhumby_project.silver.transactions_enriched
+-- GROUP BY department
+-- ORDER BY total_sales DESC 
+-- LIMIT 10;
+-- top 3 department:
+-- 1. grocery: 50.81% (4_093_814.14)
+-- 2. drug gm: 13.10% (1_055_358.03) 
+-- 3: produce: 6.92% (55_452.11)
+
+-- Q: Which age group drives the most revenue?
+-- SELECT 
+--     classification_1 AS age_group,
+--     COUNT(DISTINCT household_key) AS num_customers,
+--     ROUND(SUM(sales_value), 2) AS total_sales
+-- FROM dunnhumby_project.silver.transactions_enriched
+-- GROUP BY classification_4
+-- ORDER BY total_sales DESC;
+-- Result: Unkown classification 1 to 5 group drives the most revenue (3_559_746.82)
+
+-- Investigating the unkown classification
+-- SELECT 
+-- count(
+--     DISTINCT CASE WHEN classification_1 = 'UNKNOWN' THEN household_key  END
+-- ) as unknown_record,
+-- count(
+--     DISTINCT CASE WHEN NOT classification_1 = 'UNKNOWN' THEN household_key end
+-- ) as known_record
+-- FROM dunnhumby_project.silver.transactions_enriched
+-- Result: 67.96% unknown demographics and 32.04% known demographics 
+-- Customers often don't fill out loyalty profiles 
+-- Action: For actionable demographic insights, future analysis should focus only on the 32% of customers with complete profiles
+
+-- =====================================================================
+-- SALES ANALYSIS
+-- =====================================================================
+
+-- Q: How do weekly sales trend over time?
+-- SELECT week_no, ROUND(SUM(sales_value),2) AS weekly_sales
+-- FROM dunnhumby_project.silver.transactions_enriched
+-- GROUP BY week_no ORDER BY week_no
+-- Result: 102 weeks, avg weekly sales ~$78,995. Week 1 starts low ($5,211 - data ramp-up),
+-- peak week 92 ($113,193), final week $71,969. Steady growth through the 2-year window.
+
+-- Q: Which commodities (product categories) drive the most sales?
+-- SELECT commodity_desc, department, ROUND(SUM(sales_value),2) AS total_sales,
+--        COUNT(DISTINCT household_key) AS buyers
+-- FROM dunnhumby_project.silver.transactions_enriched
+-- GROUP BY commodity_desc, department
+-- ORDER BY total_sales DESC LIMIT 10;
+-- Top: 1. COUPON/MISC ITEMS (KIOSK-GAS) $514,686 — this is gas/misc, not real merchandise
+--      2. SOFT DRINKS $327,647 (2,405 buyers — widest reach)
+--      3. BEEF $312,103. Note: only Soft Drinks, Fluid Milk, Cheese, Bag Snacks, Bread
+--      reach 2,000+ of 2,500 households = true traffic drivers.
+
+-- Q: Which stores perform best?
+-- SELECT store_id, ROUND(SUM(sales_value),2) AS total_sales,
+--        COUNT(DISTINCT household_key) AS customers,
+--        ROUND(SUM(sales_value)/COUNT(DISTINCT household_key),2) AS sales_per_customer
+-- FROM dunnhumby_project.silver.transactions_enriched
+-- GROUP BY store_id ORDER BY total_sales DESC LIMIT 10;
+-- Top store: 367 ($267,614, 264 customers). Store 406 has the deepest customers
+-- ($1,618 per customer from only 134 customers) — high-value location.
+
+-- Q: What are the busiest shopping hours?
+-- SELECT FLOOR(trans_time/100) AS hour, ROUND(SUM(sales_value),2) AS sales
+-- FROM dunnhumby_project.silver.transactions_enriched
+-- GROUP BY hour HAVING hour BETWEEN 7 AND 22 ORDER BY hour;
+-- Peak: 15:00–19:00, led by 17:00 ($828,978). Evening commute dominates.
+
+-- Q: How much do promotions and coupons cost us?
+-- SELECT 
+--     SUM(ABS(retail_disc)) AS total_retail_disc, 
+--     SUM(ABS(coupon_disc)) AS total_coupon_disc,
+--     ROUND((SUM(ABS(retail_disc)) + SUM(ABS(coupon_disc)))*100/SUM(shelf_price*quantity),2) AS pct_of_list_price,
+--     AVG(CASE WHEN coupon_disc <> 0 THEN sales_value END) AS avg_line_w_coupon,
+--     AVG(CASE WHEN coupon_disc = 0 THEN sales_value END) AS avg_line_wo_coupon,
+--     ROUND(COUNT(DISTINCT CASE WHEN coupon_disc <> 0 THEN household_key END)*100 /COUNT(DISTINCT household_key),2) AS pct_hh_using_coupons
+-- FROM dunnhumby_project.silver.transactions_enriched
+-- WHERE department NOT IN ('KIOSK-GAS','MISC SALES TRAN','COUPON/MISC') -- removed this to include non-merchandise items
+-- Result: After excluding non-merchandise departments (KIOSK-GAS, MISC, COUPON), retail discounts total $1.38M** and coupons **$42.6K, 
+-- combining to 16.18% off list price. 74.32% of households used a coupon. Average line value with a coupon is $3.50** vs **$2.87 without — a ~22% lift.
+-- Total retail (loyalty) discounts = $1,398,351.90**; 
+-- total manufacturer coupons = **$42,611.54. Combined, this represents 16.18% off list price. 
+-- 74.32% of households used at least one coupon
+-- =====================================================================
+-- PART 3: CUSTOMER SEGMENTATION
+-- =====================================================================
+
+-- Q: What share of revenue comes from our top customers? 
+-- WITH cust AS (SELECT household_key, SUM(sales_value) AS spend
+--   FROM dunnhumby_project.silver.transactions_enriched GROUP BY household_key),
+-- ranked AS (SELECT *, NTILE(5) OVER (ORDER BY spend DESC) AS quintile FROM cust)
+-- SELECT quintile, COUNT(*) AS customers, ROUND(SUM(spend),2) AS revenue,
+--        ROUND(SUM(spend)*100/SUM(SUM(spend)) OVER (),2) AS pct_revenue
+-- FROM ranked GROUP BY quintile ORDER BY quintile;
+-- Result: top 20% of households (Q1) = 53.1% of revenue ($4.27M); top 40% = 76.7%.
+-- Bottom quintile only 2.5%. Revenue is moderately concentrated — retention of the
+-- top quintile is critical.
+
+-- Q: RFM segmentation — who are our champions, loyal, at-risk customers?
+-- WITH cust AS (
+--     SELECT 
+--         household_key, MAX(day) AS last_day,
+--         COUNT(DISTINCT basket_id) AS frequency, 
+--         ROUND(SUM(sales_value),2) AS monetary
+--   FROM dunnhumby_project.silver.transactions_enriched GROUP BY household_key),
+-- scored AS (
+--     SELECT *, 
+--     NTILE(5) OVER (ORDER BY last_day DESC) AS r_bin,
+--     NTILE(5) OVER (ORDER BY frequency) AS f_bin,
+--     NTILE(5) OVER (ORDER BY monetary) AS m_bin FROM cust)
+
+-- SELECT CASE 
+--            WHEN (r_bin+m_bin)/2 >= 4 THEN 'Champions'
+--            WHEN (r_bin+m_bin)/2 >= 3 THEN 'Loyal'
+--            WHEN r_bin >= 4 AND m_bin <= 2 THEN 'New/Promising'
+--            WHEN r_bin <= 2 AND m_bin >= 4 THEN 'At Risk (high value)'
+--            ELSE 'Occasional' END AS segment,
+--        COUNT(*) AS customers, ROUND(AVG(frequency),1) AS avg_visits,
+--        ROUND(AVG(monetary),2) AS avg_spend, ROUND(SUM(monetary),2) AS total_spend,
+--        ROUND(SUM(monetary)*100/SUM(SUM(monetary)) OVER (),2) AS pct_revenue
+-- FROM scored GROUP BY 1 ORDER BY total_spend DESC;
+-- Result:
+--   Loyal:              1,310 customers, avg $3,674 spend, 59.7% of revenue ← CORE BASE
+--   Champions:            384 customers, avg $5,115 spend, 24.4% of revenue ← PROTECT
+--   Occasional:           581 customers, avg $1,367 spend,  9.9% of revenue ← GROW
+--   At Risk (high value): 116 customers, 169 visits but lapsed, 5.4% ← WIN BACK
+--   New/Promising:        109 customers, 29 visits, 0.6%
+-- Action: Loyal + Champions = 68% of customers generating 84% of revenue.
+
+-- Q: Among households with known demographics, how does spend differ by kids and homeownership?
+-- By kids: 
+-- SELECT 
+--     kid_category_desc, COUNT(DISTINCT household_key) AS customers,
+--     ROUND(SUM(sales_value)/COUNT(DISTINCT household_key),2) AS sales_per_customer,
+--     ROUND(SUM(sales_value)/COUNT(DISTINCT basket_id),2) AS avg_basket
+-- FROM dunnhumby_project.silver.transactions_enriched
+-- WHERE kid_category_desc <> 'UNKNOWN' 
+-- GROUP BY kid_category_desc ORDER BY sales_per_customer DESC;
+-- Result: households with 2 kids ($6,764/customer, $36.24/basket) and 3+ kids ($6,742,
+--   $40.96/basket — LARGEST baskets) outspend no-kid households ($5,299, $30.35).
+-- Action: Families with 2+ kids are the highest-value demographic segment — target 
+-- family-size packs and kid-related promotions at them.
+
+-- SELECT 
+--     homeowner_desc, 
+--     COUNT(DISTINCT household_key) AS customers,
+--     ROUND(SUM(sales_value)/COUNT(DISTINCT household_key),2) AS sales_per_customer,
+--     ROUND(SUM(sales_value)/COUNT(DISTINCT basket_id)) AS avg_basket
+-- FROM dunnhumby_project.silver.transactions_enriched
+-- GROUP BY homeowner_desc
+-- ORDER BY sales_per_customer DESC;
+-- -- By homeowner: HOMEOWNER $6,022/customer (504 hhs) vs RENTER $5,633 (42 hhs).
